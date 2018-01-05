@@ -1,0 +1,13 @@
+package: github.com/anchorfree/docker-exporter
+import:
+- package: github.com/docker/docker
+  subpackages:
+  - api/types
+  - client
+- package: github.com/prometheus/client_golang
+  subpackages:
+  - prometheus
+  - prometheus/promhttp
+- package: golang.org/x/net
+  subpackages:
+  - context
