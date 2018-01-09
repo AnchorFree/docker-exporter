@@ -1,7 +1,10 @@
 # docker-exporter
 Simple exporter for docker restarts
 
-it exports one metric: `docker_container_restart_count` wich is Gauge from `docker inspect` for each container on the host
+it exports two metrics:
+
+ * `docker_container_restart_count` wich is Gauge from `docker inspect` for each container on the host
+ * `docker_container_healthy` wich is 1 if container is up and running or healthcheck is passing and 0 if anything in between
 
 It accepts following parameters:
 ```
@@ -21,7 +24,11 @@ it is based on docker EnvClient, hence use corresponding parameters as stated in
 
 ### versioning 
 We follow following convention:
+
 v0.1.0 where:
+
 v0 - major release number, braking changes are accepted between those release versions
+
 1  - second number is minor release number, there should be no braking chnages within it
+
 0  - bugfix index, in case bugs were found within scope of current release, this number should identify amount of bugfix releases
