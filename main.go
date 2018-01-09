@@ -26,11 +26,19 @@ var (
 		},
 		[]string{"name", "image_id"},
 	)
+	containerHealthStatus = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "docker_container_healthy",
+			Help: "Healthy and running if 1, and 0 if anything else",
+		},
+		[]string{"name", "image_id"},
+	)
 )
 
 func init() {
 	// Metrics have to be registered to be exposed:
 	prometheus.MustRegister(restartCount)
+	prometheus.MustRegister(containerHealthStatus)
 }
 
 func main() {
@@ -41,7 +49,7 @@ func main() {
 		log.Fatal(http.ListenAndServe(*listen, nil))
 	}()
 
-	// TODO: Move to dedicated scrape function if we will need to scrape more than one metric
+	// TODO: Move to dedicated scrape function
 	cli, err := client.NewEnvClient()
 	if err != nil {
 		panic(err)
@@ -55,8 +63,26 @@ func main() {
 		}
 
 		for _, container := range containers {
-			c, _ := cli.ContainerInspect(context.Background(), container.ID)
-			restartCount.With(prometheus.Labels{"name": c.Name, "image_id": c.Image}).Set(float64(c.RestartCount))
+			inspect, _ := cli.ContainerInspect(context.Background(), container.ID)
+
+			restartCount.With(prometheus.Labels{"name": inspect.Name, "image_id": inspect.Image}).Set(float64(inspect.RestartCount))
+
+			if inspect.State.Health != nil {
+				if inspect.State.Health.Status == types.Healthy ||
+					inspect.State.Health.Status == types.NoHealthcheck {
+					// we treat NoHealthcheck as healthy container, if we got here
+					containerHealthStatus.With(prometheus.Labels{"name": inspect.Name, "image_id": inspect.Image}).Set(1)
+				} else {
+					containerHealthStatus.With(prometheus.Labels{"name": inspect.Name, "image_id": inspect.Image}).Set(0)
+				}
+			} else {
+				if inspect.State.Running {
+					// running container considered as healthy, the rest are not
+					containerHealthStatus.With(prometheus.Labels{"name": inspect.Name, "image_id": inspect.Image}).Set(1)
+				} else {
+					containerHealthStatus.With(prometheus.Labels{"name": inspect.Name, "image_id": inspect.Image}).Set(0)
+				}
+			}
 		}
 
 		<-tick
