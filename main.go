@@ -53,36 +53,35 @@ func init() {
 }
 
 func scrapeContainer(container types.Container, cli *client.Client, closer <-chan bool) {
-	tick := time.Tick(*interval)
-	timeout := time.Duration(interval.Nanoseconds() * 3 / 4) // 3/4 of the interval seems like a reasonable timeout
-	timeoutContext, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
 	inspect, err := cli.ContainerInspect(context.Background(), container.ID)
 	if err != nil {
-		log.Printf("first inspect failed for container %s error: %s", container.ID, err)
+		log.Printf("first inspect failed for container %s : %s", container.ID, err)
 		return
 	}
 	name := inspect.Name
 	labels := prometheus.Labels{"name": name, "image_id": inspect.Image}
-	//log.Printf("starting scraper for %s", name)
-
+	timeout := time.Duration(interval.Nanoseconds() * 3 / 4) // 3/4 of the interval seems like a reasonable timeout
+	tick := time.Tick(*interval)
 	for {
 		select {
 		case <-closer:
-			//log.Printf("stopping scraper for %s", name)
 			closer = nil
 			return
 		case <-tick:
+			timeoutContext, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
 			inspect, err := cli.ContainerInspect(timeoutContext, container.ID)
-			if err != nil {
+			if err == nil {
+				inspectTimeoutStatus.With(labels).Set(1)
+			} else {
 				if err == context.DeadlineExceeded {
 					inspectTimeoutStatus.With(labels).Set(0)
 					continue
 				} else {
-					inspectTimeoutStatus.With(labels).Set(1)
+					log.Printf("inspecting %s : %s", name, err)
 				}
 			}
+			cancel()
 
 			restartCount.With(labels).Set(float64(inspect.RestartCount))
 
