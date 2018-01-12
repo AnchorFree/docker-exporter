@@ -5,6 +5,8 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"regexp"
+	"strconv"
 	"sync"
 	"time"
 
@@ -16,6 +18,9 @@ import (
 
 var (
 	wg sync.WaitGroup
+
+	// example: 17.09.0-ce
+	versionScrubber = regexp.MustCompile(`[^\d]+`)
 
 	// command line arguments
 	listen   = flag.String("listen", ":8080", "Address to listen on")
@@ -46,6 +51,13 @@ var (
 		},
 		[]string{"name", "image_id"},
 	)
+	dockerVersion = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "docker_version",
+			Help: "The version of dockerd",
+		},
+		[]string{"docker_version"},
+	)
 )
 
 func init() {
@@ -53,6 +65,7 @@ func init() {
 	prometheus.MustRegister(restartCount)
 	prometheus.MustRegister(containerHealthStatus)
 	prometheus.MustRegister(inspectTimeoutStatus)
+	prometheus.MustRegister(dockerVersion)
 }
 
 func scrapeContainer(container types.Container, cli *client.Client, closer <-chan bool) {
@@ -142,6 +155,27 @@ func scrapeContainers(cli *client.Client) {
 	}
 }
 
+func scrapeDockerVersion(cli *client.Client) {
+	tick := time.Tick(*interval)
+	//log.Printf("Starting docker version scraper")
+
+	for {
+		server, err := cli.ServerVersion(context.Background())
+		if err != nil {
+			panic(err)
+		}
+		//log.Printf("version: %s", server.Version)
+		scrubbedVersion := versionScrubber.ReplaceAllString(server.Version,"")
+		dockerVersionFloat, err := strconv.ParseFloat(scrubbedVersion, 64)
+		if err != nil {
+			panic(err)
+		}
+		dockerVersion.With(prometheus.Labels{"docker_version": server.Version}).Set(dockerVersionFloat)
+
+		<-tick
+	}
+}
+
 func main() {
 	flag.Parse()
 	wg.Add(1)
@@ -155,6 +189,8 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	go scrapeDockerVersion(cli)
 
 	go scrapeContainers(cli)
 
