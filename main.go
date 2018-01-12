@@ -165,7 +165,7 @@ func scrapeDockerVersion(cli *client.Client) {
 			panic(err)
 		}
 		//log.Printf("version: %s", server.Version)
-		scrubbedVersion := versionScrubber.ReplaceAllString(server.Version,"")
+		scrubbedVersion := versionScrubber.ReplaceAllString(server.Version, "")
 		dockerVersionFloat, err := strconv.ParseFloat(scrubbedVersion, 64)
 		if err != nil {
 			panic(err)
@@ -194,5 +194,5 @@ func main() {
 
 	go scrapeContainers(cli)
 
-	wg.Wait()	// will never end
+	wg.Wait() // will never end
 }
