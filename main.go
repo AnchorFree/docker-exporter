@@ -87,7 +87,7 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 	name := inspect.Name
 	labels := prometheus.Labels{"name": name, "image_id": inspect.Image}
 	timeout := time.Duration(interval.Nanoseconds() * 3 / 4) // 3/4 of the interval seems like a reasonable timeout
-	var inspectDone chan inspectResult	// See https://talks.golang.org/2013/advconc.slide#39
+	var inspectDone chan inspectResult                       // See https://talks.golang.org/2013/advconc.slide#39
 	tick := time.Tick(*interval)
 	for {
 		select {
