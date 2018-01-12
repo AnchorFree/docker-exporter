@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -14,6 +15,8 @@ import (
 )
 
 var (
+	wg sync.WaitGroup
+
 	// command line arguments
 	listen   = flag.String("listen", ":8080", "Address to listen on")
 	interval = flag.Duration("interval", 1*time.Minute, "Interval between docker scrapes")
@@ -105,20 +108,7 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 	}
 }
 
-func main() {
-	flag.Parse()
-
-	go func() {
-		http.Handle("/metrics", promhttp.Handler())
-		log.Fatal(http.ListenAndServe(*listen, nil))
-	}()
-
-	// TODO: Move to dedicated scrape function
-	cli, err := client.NewEnvClient()
-	if err != nil {
-		panic(err)
-	}
-
+func scrapeContainers(cli *client.Client) {
 	tick := time.Tick(*interval)
 	for {
 		containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{All: true})
@@ -146,10 +136,27 @@ func main() {
 			}
 		}
 
-		// and swap
 		scrapers = newScrapers
 
 		<-tick
 	}
+}
 
+func main() {
+	flag.Parse()
+	wg.Add(1)
+
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		log.Fatal(http.ListenAndServe(*listen, nil))
+	}()
+
+	cli, err := client.NewEnvClient()
+	if err != nil {
+		panic(err)
+	}
+
+	go scrapeContainers(cli)
+
+	wg.Wait()	// will never end
 }
