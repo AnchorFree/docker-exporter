@@ -35,8 +35,8 @@ var (
 	scrapers = make(map[string]chan bool)
 
 	// prometheus metrics
-	restartCount = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
+	restartCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
 			Name: "docker_container_restart_count",
 			Help: "Current amount of restarts.",
 		},
@@ -67,7 +67,7 @@ var (
 
 func init() {
 	// Metrics have to be registered to be exposed:
-	prometheus.MustRegister(restartCount)
+	prometheus.MustRegister(restartCounter)
 	prometheus.MustRegister(containerHealthStatus)
 	prometheus.MustRegister(inspectTimeoutStatus)
 	prometheus.MustRegister(dockerVersion)
@@ -84,6 +84,7 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 		log.Printf("first inspect failed for container %s : %s", container.ID, err)
 		return
 	}
+	lastRestartCount := 0
 	name := inspect.Name
 	labels := prometheus.Labels{"name": name, "image_id": inspect.Image}
 	timeout := time.Duration(interval.Nanoseconds() * 3 / 4) // 3/4 of the interval seems like a reasonable timeout
@@ -117,7 +118,12 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 				}
 			}
 
-			restartCount.With(labels).Set(float64(inspect.RestartCount))
+			restarts := inspect.RestartCount - lastRestartCount
+			if restarts < 0 {
+				restarts = 0
+			}
+			lastRestartCount = inspect.RestartCount
+			restartCounter.With(labels).Add(float64(restarts))
 
 			if result.inspect.State.Health != nil {
 				if result.inspect.State.Health.Status == types.Healthy ||
