@@ -16,6 +16,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+const (
+	good = iota
+	bad
+)
+
 var (
 	wg sync.WaitGroup
 
@@ -40,14 +45,14 @@ var (
 	containerHealthStatus = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "docker_container_healthy",
-			Help: "Healthy and running if 1, and 0 if anything else",
+			Help: "Healthy and running if 0, and 1 if anything else",
 		},
 		[]string{"name", "image_id"},
 	)
 	inspectTimeoutStatus = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "docker_container_stuck_inspect",
-			Help: "Inspect worked if 1, and 0 if timed out",
+			Help: "Inspect worked if 0, and 1 if timed out",
 		},
 		[]string{"name", "image_id"},
 	)
@@ -102,10 +107,10 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 			inspectDone = nil
 
 			if result.err == nil {
-				inspectTimeoutStatus.With(labels).Set(1)
+				inspectTimeoutStatus.With(labels).Set(good)
 			} else {
 				if result.err == context.DeadlineExceeded {
-					inspectTimeoutStatus.With(labels).Set(0)
+					inspectTimeoutStatus.With(labels).Set(bad)
 					continue
 				} else {
 					log.Printf("inspecting %s : %s", name, result.err)
@@ -118,16 +123,16 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 				if result.inspect.State.Health.Status == types.Healthy ||
 					result.inspect.State.Health.Status == types.NoHealthcheck {
 					// we treat NoHealthcheck as healthy container, if we got here
-					containerHealthStatus.With(labels).Set(1)
+					containerHealthStatus.With(labels).Set(good)
 				} else {
-					containerHealthStatus.With(labels).Set(0)
+					containerHealthStatus.With(labels).Set(bad)
 				}
 			} else {
 				if result.inspect.State.Running {
 					// running container considered as healthy, the rest are not
-					containerHealthStatus.With(labels).Set(1)
+					containerHealthStatus.With(labels).Set(good)
 				} else {
-					containerHealthStatus.With(labels).Set(0)
+					containerHealthStatus.With(labels).Set(bad)
 				}
 			}
 		}
