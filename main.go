@@ -68,6 +68,11 @@ func init() {
 	prometheus.MustRegister(dockerVersion)
 }
 
+type inspectResult struct {
+	inspect types.ContainerJSON
+	err     error
+}
+
 func scrapeContainer(container types.Container, cli *client.Client, closer <-chan bool) {
 	inspect, err := cli.ContainerInspect(context.Background(), container.ID)
 	if err != nil {
@@ -77,6 +82,7 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 	name := inspect.Name
 	labels := prometheus.Labels{"name": name, "image_id": inspect.Image}
 	timeout := time.Duration(interval.Nanoseconds() * 3 / 4) // 3/4 of the interval seems like a reasonable timeout
+	var inspectDone chan inspectResult	// See https://talks.golang.org/2013/advconc.slide#39
 	tick := time.Tick(*interval)
 	for {
 		select {
@@ -86,31 +92,38 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 		case <-tick:
 			timeoutContext, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
-			inspect, err := cli.ContainerInspect(timeoutContext, container.ID)
-			if err == nil {
+
+			inspectDone = make(chan inspectResult, 1)
+			go func() {
+				inspect, err := cli.ContainerInspect(timeoutContext, container.ID)
+				inspectDone <- inspectResult{inspect, err}
+			}()
+		case result := <-inspectDone:
+			inspectDone = nil
+
+			if result.err == nil {
 				inspectTimeoutStatus.With(labels).Set(1)
 			} else {
-				if err == context.DeadlineExceeded {
+				if result.err == context.DeadlineExceeded {
 					inspectTimeoutStatus.With(labels).Set(0)
 					continue
 				} else {
-					log.Printf("inspecting %s : %s", name, err)
+					log.Printf("inspecting %s : %s", name, result.err)
 				}
 			}
-			cancel()
 
 			restartCount.With(labels).Set(float64(inspect.RestartCount))
 
-			if inspect.State.Health != nil {
-				if inspect.State.Health.Status == types.Healthy ||
-					inspect.State.Health.Status == types.NoHealthcheck {
+			if result.inspect.State.Health != nil {
+				if result.inspect.State.Health.Status == types.Healthy ||
+					result.inspect.State.Health.Status == types.NoHealthcheck {
 					// we treat NoHealthcheck as healthy container, if we got here
 					containerHealthStatus.With(labels).Set(1)
 				} else {
 					containerHealthStatus.With(labels).Set(0)
 				}
 			} else {
-				if inspect.State.Running {
+				if result.inspect.State.Running {
 					// running container considered as healthy, the rest are not
 					containerHealthStatus.With(labels).Set(1)
 				} else {
@@ -124,6 +137,7 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 func scrapeContainers(cli *client.Client) {
 	tick := time.Tick(*interval)
 	for {
+		// Since we will never close scrapeContainers, don't bother to make this async following the pattern in scrapeContainer
 		containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{All: true})
 		if err != nil {
 			panic(err)
@@ -160,6 +174,7 @@ func scrapeDockerVersion(cli *client.Client) {
 	//log.Printf("Starting docker version scraper")
 
 	for {
+		// Since we will never close scrapeContainers, don't bother to make this async following the pattern in scrapeContainer
 		server, err := cli.ServerVersion(context.Background())
 		if err != nil {
 			panic(err)
