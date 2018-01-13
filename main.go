@@ -151,7 +151,7 @@ func scrapeContainers(cli *client.Client) {
 		// Since we will never close scrapeContainers, don't bother to make this async following the pattern in scrapeContainer
 		containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{All: true})
 		if err != nil {
-			panic(err)
+			log.Panic(err)
 		}
 
 		newScrapers := make(map[string]chan bool)
@@ -188,13 +188,13 @@ func scrapeDockerVersion(cli *client.Client) {
 		// Since we will never close scrapeContainers, don't bother to make this async following the pattern in scrapeContainer
 		server, err := cli.ServerVersion(context.Background())
 		if err != nil {
-			panic(err)
+			log.Panic(err)
 		}
 		//log.Printf("version: %s", server.Version)
 		scrubbedVersion := versionScrubber.ReplaceAllString(server.Version, "")
 		dockerVersionFloat, err := strconv.ParseFloat(scrubbedVersion, 64)
 		if err != nil {
-			panic(err)
+			log.Panic(err)
 		}
 		dockerVersion.With(prometheus.Labels{"docker_version": server.Version}).Set(dockerVersionFloat)
 
@@ -213,7 +213,7 @@ func main() {
 
 	cli, err := client.NewEnvClient()
 	if err != nil {
-		panic(err)
+		log.Panic(err)
 	}
 
 	go scrapeDockerVersion(cli)
