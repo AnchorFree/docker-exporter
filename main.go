@@ -7,11 +7,11 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"os"
-	"strings"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,6 +68,13 @@ var (
 		},
 		[]string{"docker_version"},
 	)
+	zombieProcesses = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "docker_zombie_processes",
+			Help: "Current number of zombie processes that start with [docker",
+		},
+		[]string{},
+	)
 )
 
 func init() {
@@ -76,6 +83,7 @@ func init() {
 	prometheus.MustRegister(containerHealthStatus)
 	prometheus.MustRegister(inspectTimeoutStatus)
 	prometheus.MustRegister(dockerVersion)
+	prometheus.MustRegister(zombieProcesses)
 }
 
 type inspectResult struct {
@@ -207,11 +215,6 @@ func scrapeDockerVersion(cli *client.Client) {
 	}
 }
 
-
-// BEGIN copy from https://github.com/mitchellh/go-ps
-
-// UnixProcess is an implementation of Process that contains Unix-specific
-// fields and information.
 type UnixProcess struct {
 	pid   int
 	ppid  int
@@ -252,22 +255,21 @@ func newUnixProcess(pid int) (*UnixProcess, error) {
 	return p, p.Refresh()
 }
 
-// Hacked Process -> UnixProcess because this will only run on Linux.
-func processes() ([]UnixProcess, error) {
+func zombieDockerProcessCount() (int, error) {
 	d, err := os.Open("/proc")
 	if err != nil {
-		return nil, err
+		return -1, err
 	}
 	defer d.Close()
 
-	results := make([]UnixProcess, 0, 50)
+	zombieCount := 0
 	for {
 		fis, err := d.Readdir(10)
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, err
+			return -1, err
 		}
 
 		for _, fi := range fis {
@@ -294,15 +296,51 @@ func processes() ([]UnixProcess, error) {
 				continue
 			}
 
-			results = append(results, p)
+			// We are only interested in Zombie processes and per
+			// http://man7.org/linux/man-pages/man5/proc.5.html
+			// /proc/[pid]/stat state field maps to Z for zombie / defunct
+			if p.state != 'Z' {
+				continue
+			}
+
+			// Look for executables with names like [docker-stop] <defunct>
+			if strings.HasPrefix(p.binary, "[docker") {
+				zombieCount++
+			}
 		}
 	}
 
 	d.Close()
-	return results, nil
+	return zombieCount, nil
 }
 
-// END copy
+type countResult struct {
+	count int
+	err   error
+}
+
+func scrapeDefunct() {
+	var countDone chan countResult // See https://talks.golang.org/2013/advconc.slide#39
+	labels := prometheus.Labels{}
+	tick := time.Tick(*interval)
+	for {
+		select {
+		case <-tick:
+			countDone = make(chan countResult, 1)
+			go func() {
+				zombieCount, err := zombieDockerProcessCount()
+				countDone <- countResult{zombieCount, err}
+			}()
+		case result := <-countDone:
+			countDone = nil
+			if result.err != nil {
+				log.Panic(result.err)
+
+			}
+			zombieProcesses.With(labels).Set(float64(result.count))
+		}
+	}
+}
 
 func main() {
 	flag.Parse()
@@ -321,6 +359,8 @@ func main() {
 	go scrapeDockerVersion(cli)
 
 	go scrapeContainers(cli)
+
+	go scrapeDefunct()
 
 	wg.Wait() // will never end
 }
