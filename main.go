@@ -99,6 +99,7 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 	}
 	lastRestartCount := 0
 	name := inspect.Name
+	log.Printf("Start scraping %s", name)
 	labels := prometheus.Labels{"name": name, "image_id": inspect.Image}
 	timeout := time.Duration(interval.Nanoseconds() * 3 / 4) // 3/4 of the interval seems like a reasonable timeout
 	var inspectDone chan inspectResult                       // See https://talks.golang.org/2013/advconc.slide#39
@@ -107,6 +108,7 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 		select {
 		case <-closer:
 			closer = nil
+			log.Printf("Stop scraping %s", name)
 			return
 		case <-tick:
 			timeoutContext, cancel := context.WithTimeout(context.Background(), timeout)
