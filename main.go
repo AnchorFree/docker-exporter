@@ -75,6 +75,13 @@ var (
 		},
 		[]string{},
 	)
+	dockerContainerCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "docker_container_count",
+			Help: "The number of containers found.",
+		},
+		[]string{"docker_container_count"},
+	)
 )
 
 func init() {
@@ -84,6 +91,7 @@ func init() {
 	prometheus.MustRegister(inspectTimeoutStatus)
 	prometheus.MustRegister(dockerVersion)
 	prometheus.MustRegister(zombieProcesses)
+	prometheus.MustRegister(dockerContainerCount)
 }
 
 type inspectResult struct {
@@ -170,7 +178,9 @@ func scrapeContainers(cli *client.Client) {
 		}
 
 		newScrapers := make(map[string]chan bool)
+		containerCount := 0
 		for _, container := range containers {
+			containerCount ++
 			if _, present := scrapers[container.ID]; present {
 				newScrapers[container.ID] = scrapers[container.ID]
 			} else {
@@ -179,6 +189,7 @@ func scrapeContainers(cli *client.Client) {
 				go scrapeContainer(container, cli, newScrapers[container.ID])
 			}
 		}
+		containerHealthStatus.With(prometheus.Labels{"docker_container_count": strconv.Itoa(containerCount)}).Set(float64(containerCount))
 
 		// detect containers which have gone away and kill their scrapers
 		for containerId, closer := range scrapers {
