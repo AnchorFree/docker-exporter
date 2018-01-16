@@ -235,6 +235,8 @@ func (p *UnixProcess) Refresh() error {
 	}
 
 	// First, parse out the image name
+	// Example stat string:
+	// 9249 (haproxy) S 5003 5003 5003 0 -1 4194560 21133 0 0 0 36 2 0 0 20 0 1 0 176991 99676160 21269 18446744073709551615 94539338215424 94539339626788 140727663170416 140727663169928 140237674944734 0 0 4096 3146245 1 0 0 17 4 0 0 0 0 0 94539341725792 94539341790336 94539349725184 140727663173220 140727663173296 140727663173296 140727663173600 0
 	data := string(dataBytes)
 	binStart := strings.IndexRune(data, '(') + 1
 	binEnd := strings.IndexRune(data[binStart:], ')')
@@ -312,7 +314,6 @@ func zombieDockerProcessCount() (int, error) {
 		}
 	}
 
-	d.Close()
 	return zombieCount, nil
 }
 
