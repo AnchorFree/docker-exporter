@@ -189,7 +189,7 @@ func scrapeContainers(cli *client.Client) {
 				go scrapeContainer(container, cli, newScrapers[container.ID])
 			}
 		}
-		containerHealthStatus.With(prometheus.Labels{"docker_container_count": strconv.Itoa(containerCount)}).Set(float64(containerCount))
+		dockerContainerCount.With(prometheus.Labels{"docker_container_count": strconv.Itoa(containerCount)}).Set(float64(containerCount))
 
 		// detect containers which have gone away and kill their scrapers
 		for containerId, closer := range scrapers {
