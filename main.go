@@ -105,13 +105,13 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 		log.Printf("first inspect failed for container %s : %s", container.ID, err)
 		return
 	}
-	lastRestartCount := 0
 	name := inspect.Name
 	log.Printf("Start scraping %s", name)
 	labels := prometheus.Labels{"name": name, "image_id": inspect.Image}
 	timeout := time.Duration(interval.Nanoseconds() * 3 / 4) // 3/4 of the interval seems like a reasonable timeout
-	var inspectDone chan inspectResult                       // See https://talks.golang.org/2013/advconc.slide#39
+	inspectDone := make(chan inspectResult, 1)
 	tick := time.Tick(*interval)
+	var result inspectResult
 	for {
 		select {
 		case <-closer:
@@ -122,14 +122,12 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 			timeoutContext, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 
-			inspectDone = make(chan inspectResult, 1)
 			go func() {
 				inspect, err := cli.ContainerInspect(timeoutContext, container.ID)
 				inspectDone <- inspectResult{inspect, err}
 			}()
-		case result := <-inspectDone:
-			inspectDone = nil
 
+		case result = <-inspectDone:
 			if result.err == nil {
 				inspectTimeoutStatus.With(labels).Set(good)
 			} else {
@@ -141,13 +139,8 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 				}
 			}
 
-			restarts := inspect.RestartCount - lastRestartCount
-			if restarts < 0 {
-				restarts = 0
-			}
-			lastRestartCount = inspect.RestartCount
-			restartCounter.With(labels).Add(float64(restarts))
-
+			inspect = result.inspect
+			restartCounter.With(labels).Set(float64(inspect.RestartCount))
 			if result.inspect.State.Health != nil {
 				if result.inspect.State.Health.Status == types.Healthy ||
 					result.inspect.State.Health.Status == types.NoHealthcheck {
@@ -180,7 +173,7 @@ func scrapeContainers(cli *client.Client) {
 		newScrapers := make(map[string]chan bool)
 		containerCount := 0
 		for _, container := range containers {
-			containerCount ++
+			containerCount++
 			if _, present := scrapers[container.ID]; present {
 				newScrapers[container.ID] = scrapers[container.ID]
 			} else {
