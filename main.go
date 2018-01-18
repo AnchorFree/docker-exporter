@@ -312,7 +312,8 @@ func zombieDockerProcessCount() (int, error) {
 			}
 
 			// Look for executables with names like [docker-stop] <defunct>
-			if strings.HasPrefix(p.binary, "[docker") {
+			// I believe the [] in the name is syntactic sugar from ps, or at least this leads to a count of 0 across all servers.
+			if strings.HasPrefix(p.binary, "docker") {
 				zombieCount++
 			}
 		}
