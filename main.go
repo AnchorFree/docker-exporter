@@ -107,7 +107,7 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 	}
 	name := inspect.Name
 	log.Printf("Start scraping %s", name)
-	labels := prometheus.Labels{"name": name, "image_id": inspect.Image}
+	perContainerLabels := prometheus.Labels{"name": name, "image_id": inspect.Image}
 	timeout := time.Duration(interval.Nanoseconds() * 3 / 4) // 3/4 of the interval seems like a reasonable timeout
 	inspectDone := make(chan inspectResult, 1)
 	tick := time.Tick(*interval)
@@ -129,10 +129,10 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 
 		case result = <-inspectDone:
 			if result.err == nil {
-				inspectTimeoutStatus.With(labels).Set(good)
+				inspectTimeoutStatus.With(perContainerLabels).Set(good)
 			} else {
 				if result.err == context.DeadlineExceeded {
-					inspectTimeoutStatus.With(labels).Set(bad)
+					inspectTimeoutStatus.With(perContainerLabels).Set(bad)
 					continue
 				} else {
 					log.Printf("inspecting %s : %s", name, result.err)
@@ -140,21 +140,21 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 			}
 
 			inspect = result.inspect
-			restartCounter.With(labels).Set(float64(inspect.RestartCount))
+			restartCounter.With(perContainerLabels).Set(float64(inspect.RestartCount))
 			if inspect.State.Health != nil {
 				if inspect.State.Health.Status == types.Healthy ||
 					inspect.State.Health.Status == types.NoHealthcheck {
 					// we treat NoHealthcheck as healthy container, if we got here
-					containerHealthStatus.With(labels).Set(good)
+					containerHealthStatus.With(perContainerLabels).Set(good)
 				} else {
-					containerHealthStatus.With(labels).Set(bad)
+					containerHealthStatus.With(perContainerLabels).Set(bad)
 				}
 			} else {
 				if  inspect.State.Running {
 					// running container considered as healthy, the rest are not
-					containerHealthStatus.With(labels).Set(good)
+					containerHealthStatus.With(perContainerLabels).Set(good)
 				} else {
-					containerHealthStatus.With(labels).Set(bad)
+					containerHealthStatus.With(perContainerLabels).Set(bad)
 				}
 			}
 		}
