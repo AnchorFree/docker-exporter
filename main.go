@@ -150,7 +150,7 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 					containerHealthStatus.With(perContainerLabels).Set(bad)
 				}
 			} else {
-				if  inspect.State.Running {
+				if inspect.State.Running {
 					// running container considered as healthy, the rest are not
 					containerHealthStatus.With(perContainerLabels).Set(good)
 				} else {
