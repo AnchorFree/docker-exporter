@@ -141,16 +141,16 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 
 			inspect = result.inspect
 			restartCounter.With(labels).Set(float64(inspect.RestartCount))
-			if result.inspect.State.Health != nil {
-				if result.inspect.State.Health.Status == types.Healthy ||
-					result.inspect.State.Health.Status == types.NoHealthcheck {
+			if inspect.State.Health != nil {
+				if inspect.State.Health.Status == types.Healthy ||
+					inspect.State.Health.Status == types.NoHealthcheck {
 					// we treat NoHealthcheck as healthy container, if we got here
 					containerHealthStatus.With(labels).Set(good)
 				} else {
 					containerHealthStatus.With(labels).Set(bad)
 				}
 			} else {
-				if result.inspect.State.Running {
+				if  inspect.State.Running {
 					// running container considered as healthy, the rest are not
 					containerHealthStatus.With(labels).Set(good)
 				} else {
