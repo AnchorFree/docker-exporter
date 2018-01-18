@@ -82,6 +82,13 @@ var (
 		},
 		[]string{"docker_container_count"},
 	)
+	dockerContainerStatus = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "docker_container_status",
+			Help: "The number of containers found.",
+		},
+		[]string{"name", "image_id", "docker_container_status"},
+	)
 )
 
 func init() {
@@ -92,6 +99,7 @@ func init() {
 	prometheus.MustRegister(dockerVersion)
 	prometheus.MustRegister(zombieProcesses)
 	prometheus.MustRegister(dockerContainerCount)
+	prometheus.MustRegister(dockerContainerStatus)
 }
 
 type inspectResult struct {
@@ -106,8 +114,9 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 		return
 	}
 	name := inspect.Name
+	image_id := inspect.Image
 	log.Printf("Start scraping %s", name)
-	perContainerLabels := prometheus.Labels{"name": name, "image_id": inspect.Image}
+	perContainerLabels := prometheus.Labels{"name": name, "image_id": image_id}
 	timeout := time.Duration(interval.Nanoseconds() * 3 / 4) // 3/4 of the interval seems like a reasonable timeout
 	inspectDone := make(chan inspectResult, 1)
 	tick := time.Tick(*interval)
@@ -141,6 +150,7 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 
 			inspect = result.inspect
 			restartCounter.With(perContainerLabels).Set(float64(inspect.RestartCount))
+			dockerContainerStatus.With(prometheus.Labels{"name": name, "image_id": image_id, "docker_container_status": inspect.State.Status}).Set(1)
 			if inspect.State.Health != nil {
 				if inspect.State.Health.Status == types.Healthy ||
 					inspect.State.Health.Status == types.NoHealthcheck {
