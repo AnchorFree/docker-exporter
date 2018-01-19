@@ -28,6 +28,8 @@ import (
 const (
 	good = iota
 	bad
+
+	int64max = int64(9223372036854775807)
 )
 
 var (
@@ -126,9 +128,9 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 		return
 	}
 	name := inspect.Name
-	image_id := inspect.Image
+	imageId := inspect.Image
 	log.Printf("Start scraping %s", name)
-	perContainerLabels := prometheus.Labels{"name": name, "image_id": image_id}
+	perContainerLabels := prometheus.Labels{"name": name, "image_id": imageId}
 	timeout := time.Duration(interval.Nanoseconds() * 3 / 4) // 3/4 of the interval seems like a reasonable timeout
 	inspectDone := make(chan inspectResult, 1)
 	tick := time.Tick(*interval)
@@ -162,7 +164,7 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 
 			inspect = result.inspect
 			restartCounter.With(perContainerLabels).Set(float64(inspect.RestartCount))
-			dockerContainerStatus.With(prometheus.Labels{"name": name, "image_id": image_id, "docker_container_status": inspect.State.Status}).Set(1)
+			dockerContainerStatus.With(prometheus.Labels{"name": name, "image_id": imageId, "docker_container_status": inspect.State.Status}).Set(1)
 			if inspect.State.Health != nil {
 				if inspect.State.Health.Status == types.Healthy ||
 					inspect.State.Health.Status == types.NoHealthcheck {
@@ -357,7 +359,7 @@ func scrapeProc() (procResult, error) {
 
 	zombieCount := 0
 	cmdline := ""
-	smallestStartTime := int64(9223372036854775807)
+	smallestStartTime := int64max
 	for {
 		fis, err := d.Readdir(10)
 		if err == io.EOF {
