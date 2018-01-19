@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -21,9 +22,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// #include <unistd.h>
+//import "C"
+
 const (
 	good = iota
 	bad
+
+	int64max = int64(9223372036854775807)
 )
 
 var (
@@ -82,6 +88,20 @@ var (
 		},
 		[]string{"docker_container_count"},
 	)
+	dockerContainerStatus = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "docker_container_status",
+			Help: "The number of containers found.",
+		},
+		[]string{"name", "image_id", "docker_container_status"},
+	)
+	dockerLongestRunning = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "docker_longest_running",
+			Help: "Runtime for docker processes",
+		},
+		[]string{"cmdline"},
+	)
 )
 
 func init() {
@@ -92,6 +112,8 @@ func init() {
 	prometheus.MustRegister(dockerVersion)
 	prometheus.MustRegister(zombieProcesses)
 	prometheus.MustRegister(dockerContainerCount)
+	prometheus.MustRegister(dockerContainerStatus)
+	prometheus.MustRegister(dockerLongestRunning)
 }
 
 type inspectResult struct {
@@ -106,8 +128,9 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 		return
 	}
 	name := inspect.Name
+	imageId := inspect.Image
 	log.Printf("Start scraping %s", name)
-	labels := prometheus.Labels{"name": name, "image_id": inspect.Image}
+	perContainerLabels := prometheus.Labels{"name": name, "image_id": imageId}
 	timeout := time.Duration(interval.Nanoseconds() * 3 / 4) // 3/4 of the interval seems like a reasonable timeout
 	inspectDone := make(chan inspectResult, 1)
 	tick := time.Tick(*interval)
@@ -129,10 +152,10 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 
 		case result = <-inspectDone:
 			if result.err == nil {
-				inspectTimeoutStatus.With(labels).Set(good)
+				inspectTimeoutStatus.With(perContainerLabels).Set(good)
 			} else {
 				if result.err == context.DeadlineExceeded {
-					inspectTimeoutStatus.With(labels).Set(bad)
+					inspectTimeoutStatus.With(perContainerLabels).Set(bad)
 					continue
 				} else {
 					log.Printf("inspecting %s : %s", name, result.err)
@@ -140,21 +163,22 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 			}
 
 			inspect = result.inspect
-			restartCounter.With(labels).Set(float64(inspect.RestartCount))
-			if result.inspect.State.Health != nil {
-				if result.inspect.State.Health.Status == types.Healthy ||
-					result.inspect.State.Health.Status == types.NoHealthcheck {
+			restartCounter.With(perContainerLabels).Set(float64(inspect.RestartCount))
+			dockerContainerStatus.With(prometheus.Labels{"name": name, "image_id": imageId, "docker_container_status": inspect.State.Status}).Set(1)
+			if inspect.State.Health != nil {
+				if inspect.State.Health.Status == types.Healthy ||
+					inspect.State.Health.Status == types.NoHealthcheck {
 					// we treat NoHealthcheck as healthy container, if we got here
-					containerHealthStatus.With(labels).Set(good)
+					containerHealthStatus.With(perContainerLabels).Set(good)
 				} else {
-					containerHealthStatus.With(labels).Set(bad)
+					containerHealthStatus.With(perContainerLabels).Set(bad)
 				}
 			} else {
-				if result.inspect.State.Running {
+				if inspect.State.Running {
 					// running container considered as healthy, the rest are not
-					containerHealthStatus.With(labels).Set(good)
+					containerHealthStatus.With(perContainerLabels).Set(good)
 				} else {
-					containerHealthStatus.With(labels).Set(bad)
+					containerHealthStatus.With(perContainerLabels).Set(bad)
 				}
 			}
 		}
@@ -222,13 +246,37 @@ func scrapeDockerVersion(cli *client.Client) {
 }
 
 type UnixProcess struct {
-	pid   int
-	ppid  int
-	state rune
-	pgrp  int
-	sid   int
+	pid         int
+	ppid        int
+	state       rune
+	pgrp        int
+	sid         int
+	tty_nr      int
+	tpgit       int
+	flags       uint
+	minflt      uint32
+	cminflt     uint32
+	utime       uint32
+	stime       uint32
+	cutime      int32
+	cstime      int32
+	nice        int32
+	num_threads int32
+	itrealvalue int32
+	starttime   int64
+	vsize       uint32
+	rss         int32
+	rsslim      uint32
+	startcode   uint32
+	endcode     uint32
+	startstack  uint32
+	kstkesp     uint32
+	kstkeip     uint32
+	signal      uint32
+	blocked     uint32
 
-	binary string
+	binary  string
+	cmdline string
 }
 
 func (p *UnixProcess) Refresh() error {
@@ -249,12 +297,45 @@ func (p *UnixProcess) Refresh() error {
 	// Move past the image name and start parsing the rest
 	data = data[binStart+binEnd+2:]
 	_, err = fmt.Sscanf(data,
-		"%c %d %d %d",
+		"%c %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
 		&p.state,
 		&p.ppid,
 		&p.pgrp,
-		&p.sid)
+		&p.sid,
+		&p.tty_nr,
+		&p.tpgit,
+		&p.flags,
+		&p.minflt,
+		&p.cminflt,
+		&p.utime,
+		&p.stime,
+		&p.cutime,
+		&p.cstime,
+		&p.nice,
+		&p.num_threads,
+		&p.itrealvalue,
+		&p.starttime,
+		&p.vsize,
+		&p.rss,
+		&p.rsslim,
+		&p.startcode,
+		&p.endcode,
+		&p.startstack,
+		&p.kstkesp,
+		&p.kstkeip,
+		&p.signal,
+		&p.blocked)
 
+	return err
+}
+
+func (p *UnixProcess) RefreshCmdline() error {
+	cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", p.pid)
+	cmdline, err := ioutil.ReadFile(cmdlinePath)
+	if err != nil {
+		return err
+	}
+	p.cmdline = string(cmdline)
 	return err
 }
 
@@ -263,21 +344,29 @@ func newUnixProcess(pid int) (*UnixProcess, error) {
 	return p, p.Refresh()
 }
 
-func zombieDockerProcessCount() (int, error) {
+type procResult struct {
+	zombieCount int
+	cmdline     string
+	startTime   int64
+}
+
+func scrapeProc() (procResult, error) {
 	d, err := os.Open("/proc")
 	if err != nil {
-		return -1, err
+		return procResult{}, err
 	}
 	defer d.Close()
 
 	zombieCount := 0
+	cmdline := ""
+	smallestStartTime := int64max
 	for {
 		fis, err := d.Readdir(10)
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return -1, err
+			return procResult{}, err
 		}
 
 		for _, fi := range fis {
@@ -304,40 +393,52 @@ func zombieDockerProcessCount() (int, error) {
 				continue
 			}
 
+			// Look for executables with names like [docker-stop] <defunct>
+			// I believe the [] in the name is syntactic sugar from ps, or at least this leads to a count of 0 across all servers.
+			if p.binary != "docker" {
+				continue
+			}
+
 			// We are only interested in Zombie processes and per
 			// http://man7.org/linux/man-pages/man5/proc.5.html
 			// /proc/[pid]/stat state field maps to Z for zombie / defunct
 			if p.state != 'Z' {
-				continue
+				zombieCount++
 			}
 
-			// Look for executables with names like [docker-stop] <defunct>
-			// I believe the [] in the name is syntactic sugar from ps, or at least this leads to a count of 0 across all servers.
-			if strings.HasPrefix(p.binary, "docker") {
-				zombieCount++
+			// Find oldest startcount
+			if p.starttime < smallestStartTime {
+				p.RefreshCmdline()
+				log.Printf("lrp: %s", p.cmdline)
+				smallestStartTime = p.starttime
+				cmdline = p.cmdline
 			}
 		}
 	}
 
-	return zombieCount, nil
+	return procResult{zombieCount, cmdline, smallestStartTime}, nil
 }
 
 type countResult struct {
-	count int
-	err   error
+	scrapeProcResults procResult
+	err               error
 }
 
 func scrapeDefunct() {
 	var countDone chan countResult // See https://talks.golang.org/2013/advconc.slide#39
 	labels := prometheus.Labels{}
 	tick := time.Tick(*interval)
+	//clockTicksPerSec := float64(C.sysconf(C._SC_CLK_TCK))
+	// Linking callouts to C libraries is a nightmare.
+	// 100 is the standard value for this, so...
+	clockTicksPerSec := float64(100)
 	for {
 		select {
 		case <-tick:
 			countDone = make(chan countResult, 1)
 			go func() {
-				zombieCount, err := zombieDockerProcessCount()
-				countDone <- countResult{zombieCount, err}
+				r, err := scrapeProc()
+				countDone <- countResult{r, err}
 			}()
 		case result := <-countDone:
 			countDone = nil
@@ -345,7 +446,26 @@ func scrapeDefunct() {
 				log.Panic(result.err)
 
 			}
-			zombieProcesses.With(labels).Set(float64(result.count))
+			r := result.scrapeProcResults
+			zombieProcesses.With(labels).Set(float64(r.zombieCount))
+			// From http://man7.org/linux/man-pages/man5/proc.5.html
+			// r.startTime is
+			// The time the process started after system boot.
+			// ... snip ...
+			// Since Linux 2.6, the value is expressed
+			// in clock ticks (divide by sysconf(_SC_CLK_TCK)).
+			s := syscall.Sysinfo_t{}
+			err := syscall.Sysinfo(&s)
+			if err != nil {
+				log.Panic(err)
+			}
+			c := r.cmdline
+			t := float64(s.Uptime) - float64(r.startTime)/clockTicksPerSec
+			if t < 0 {
+				c = "nil"
+				t = 0
+			}
+			dockerLongestRunning.With(prometheus.Labels{"cmdline": c}).Set(t)
 		}
 	}
 }

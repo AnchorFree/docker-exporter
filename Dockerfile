@@ -1,6 +1,7 @@
 FROM golang:1.9
 
 COPY . /go/src/github.com/anchorfree/docker-exporter
+
 RUN cd /go/src/github.com/anchorfree/docker-exporter \
     && CGO_ENABLED=0 go build -o /build/docker-exporter  *.go
 
