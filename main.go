@@ -29,7 +29,7 @@ const (
 	good = iota
 	bad
 
-	int64max = int64(9223372036854775807)
+	int64max int64 = int64(9223372036854775807)
 )
 
 var (
@@ -135,18 +135,27 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 	inspectDone := make(chan inspectResult, 1)
 	tick := time.Tick(*interval)
 	var result inspectResult
+	var timeoutContext context.Context
+	var cancel context.CancelFunc
 	for {
 		select {
 		case <-closer:
+			if cancel != nil {
+				cancel()
+			}
 			closer = nil
 			log.Printf("Stop scraping %s", name)
 			return
 		case <-tick:
-			timeoutContext, cancel := context.WithTimeout(context.Background(), timeout)
-			defer cancel()
+			// because we timeout before it is possible to have the next tick,
+			// this will not get clobbered by the next tick
+			timeoutContext, cancel = context.WithTimeout(context.Background(), timeout)
 
 			go func() {
 				inspect, err := cli.ContainerInspect(timeoutContext, container.ID)
+				cancel()
+				timeoutContext = nil
+				cancel = nil
 				inspectDone <- inspectResult{inspect, err}
 			}()
 
