@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"regexp"
 	"strconv"
@@ -39,6 +40,7 @@ var (
 	versionScrubber = regexp.MustCompile(`[^\d]+`)
 
 	// command line arguments
+	pperf    = flag.Int("pperf", 0, "Port for pperf to listen on. 0 is disabled")
 	listen   = flag.String("listen", ":8080", "Address to listen on")
 	interval = flag.Duration("interval", 1*time.Minute, "Interval between docker scrapes")
 
@@ -480,10 +482,19 @@ func scrapeDefunct() {
 func main() {
 	flag.Parse()
 	wg.Add(1)
+	
+	if *pperf > 0 {
+		pperfAddr := fmt.Sprintf("localhost:%d", *pperf)
+		go func() {
+			log.Println(http.ListenAndServe(pperfAddr, nil))
+		}()
+	}
 
 	go func() {
-		http.Handle("/metrics", promhttp.Handler())
-		log.Fatal(http.ListenAndServe(*listen, nil))
+		// Since we have imported pperf support, we must not use DefaultServerMux
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		log.Fatal(http.ListenAndServe(*listen, mux))
 	}()
 
 	cli, err := client.NewEnvClient()
