@@ -434,7 +434,7 @@ type countResult struct {
 }
 
 func scrapeDefunct() {
-	var countDone chan countResult // See https://talks.golang.org/2013/advconc.slide#39
+	countDone := make(chan countResult, 1)
 	labels := prometheus.Labels{}
 	tick := time.Tick(*interval)
 	//clockTicksPerSec := float64(C.sysconf(C._SC_CLK_TCK))
@@ -444,13 +444,11 @@ func scrapeDefunct() {
 	for {
 		select {
 		case <-tick:
-			countDone = make(chan countResult, 1)
 			go func() {
 				r, err := scrapeProc()
 				countDone <- countResult{r, err}
 			}()
 		case result := <-countDone:
-			countDone = nil
 			if result.err != nil {
 				log.Panic(result.err)
 
