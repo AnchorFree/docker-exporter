@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"regexp"
 	"strconv"
@@ -29,7 +30,7 @@ const (
 	good = iota
 	bad
 
-	int64max = int64(9223372036854775807)
+	int64max int64 = int64(9223372036854775807)
 )
 
 var (
@@ -39,6 +40,7 @@ var (
 	versionScrubber = regexp.MustCompile(`[^\d]+`)
 
 	// command line arguments
+	pperf    = flag.Int("pperf", 0, "Port for pperf to listen on. 0 is disabled")
 	listen   = flag.String("listen", ":8080", "Address to listen on")
 	interval = flag.Duration("interval", 1*time.Minute, "Interval between docker scrapes")
 
@@ -135,18 +137,27 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 	inspectDone := make(chan inspectResult, 1)
 	tick := time.Tick(*interval)
 	var result inspectResult
+	var timeoutContext context.Context
+	var cancel context.CancelFunc
 	for {
 		select {
 		case <-closer:
+			if cancel != nil {
+				cancel()
+			}
 			closer = nil
 			log.Printf("Stop scraping %s", name)
 			return
 		case <-tick:
-			timeoutContext, cancel := context.WithTimeout(context.Background(), timeout)
-			defer cancel()
+			// because we timeout before it is possible to have the next tick,
+			// this will not get clobbered by the next tick
+			timeoutContext, cancel = context.WithTimeout(context.Background(), timeout)
 
 			go func() {
 				inspect, err := cli.ContainerInspect(timeoutContext, container.ID)
+				cancel()
+				timeoutContext = nil
+				cancel = nil
 				inspectDone <- inspectResult{inspect, err}
 			}()
 
@@ -297,7 +308,7 @@ func (p *UnixProcess) Refresh() error {
 	// Move past the image name and start parsing the rest
 	data = data[binStart+binEnd+2:]
 	_, err = fmt.Sscanf(data,
-		"%c %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+		"%c %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
 		&p.state,
 		&p.ppid,
 		&p.pgrp,
@@ -425,7 +436,7 @@ type countResult struct {
 }
 
 func scrapeDefunct() {
-	var countDone chan countResult // See https://talks.golang.org/2013/advconc.slide#39
+	countDone := make(chan countResult, 1)
 	labels := prometheus.Labels{}
 	tick := time.Tick(*interval)
 	//clockTicksPerSec := float64(C.sysconf(C._SC_CLK_TCK))
@@ -435,13 +446,11 @@ func scrapeDefunct() {
 	for {
 		select {
 		case <-tick:
-			countDone = make(chan countResult, 1)
 			go func() {
 				r, err := scrapeProc()
 				countDone <- countResult{r, err}
 			}()
 		case result := <-countDone:
-			countDone = nil
 			if result.err != nil {
 				log.Panic(result.err)
 
@@ -473,10 +482,19 @@ func scrapeDefunct() {
 func main() {
 	flag.Parse()
 	wg.Add(1)
+	
+	if *pperf > 0 {
+		pperfAddr := fmt.Sprintf("localhost:%d", *pperf)
+		go func() {
+			log.Println(http.ListenAndServe(pperfAddr, nil))
+		}()
+	}
 
 	go func() {
-		http.Handle("/metrics", promhttp.Handler())
-		log.Fatal(http.ListenAndServe(*listen, nil))
+		// Since we have imported pperf support, we must not use DefaultServerMux
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		log.Fatal(http.ListenAndServe(*listen, mux))
 	}()
 
 	cli, err := client.NewEnvClient()
