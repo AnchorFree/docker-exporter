@@ -45,8 +45,7 @@ var (
 	interval = flag.Duration("interval", 1*time.Minute, "Interval between docker scrapes")
 
 	// maps container id -> closer channel
-	scrapers  = make(map[string]chan bool)
-	scrapersM scrapersManager
+	scrapers = make(map[string]chan bool)
 
 	// prometheus metrics
 	restartCounter = prometheus.NewCounterVec(
@@ -107,37 +106,6 @@ var (
 	)
 )
 
-type scrapersManager struct {
-	scrapers map[string]chan bool
-	mu       sync.Mutex
-}
-
-func (m *scrapersManager) newScrapersChan() map[string]chan bool {
-	m.mu.Lock()
-	m.scrapers = make(map[string]chan bool)
-	m.mu.Unlock()
-	return m.scrapers
-}
-
-func (m *scrapersManager) checkContainerPresent(containerID string) (chan bool, bool) {
-	m.mu.Lock()
-	value, present := m.scrapers[containerID]
-	m.mu.Unlock()
-	return value, present
-}
-
-func (m *scrapersManager) addContainer(containerID string) {
-	m.mu.Lock()
-	m.scrapers[containerID] = make(chan bool)
-	m.mu.Unlock()
-}
-
-func (m *scrapersManager) flushScrapers() {
-	m.mu.Lock()
-	m.scrapers = nil
-	m.mu.Unlock()
-}
-
 func init() {
 	// Metrics have to be registered to be exposed:
 	prometheus.MustRegister(restartCounter)
@@ -172,7 +140,6 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 	var timeoutContext context.Context
 	var cancel context.CancelFunc
 	for {
-	loop:
 		select {
 		case <-closer:
 			if cancel != nil {
@@ -203,7 +170,7 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 					continue
 				} else {
 					log.Printf("inspecting %s : %s", name, result.err)
-					break loop
+					continue
 				}
 			}
 
@@ -240,16 +207,12 @@ func scrapeContainers(cli *client.Client) {
 		}
 
 		newScrapers := make(map[string]chan bool)
-		// newScrapersChan
-
 		containerCount := 0
 		for _, container := range containers {
 			containerCount++
-			// checkContainerPresent
 			if _, present := scrapers[container.ID]; present {
 				newScrapers[container.ID] = scrapers[container.ID]
 			} else {
-				//log.Printf("new container: %s", container.ID)
 				newScrapers[container.ID] = make(chan bool)
 				go scrapeContainer(container, cli, newScrapers[container.ID])
 			}
