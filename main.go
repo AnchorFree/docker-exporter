@@ -45,7 +45,8 @@ var (
 	interval = flag.Duration("interval", 1*time.Minute, "Interval between docker scrapes")
 
 	// maps container id -> closer channel
-	scrapers = make(map[string]chan bool)
+	scrapers  = make(map[string]chan bool)
+	scrapersM scrapersManager
 
 	// prometheus metrics
 	restartCounter = prometheus.NewCounterVec(
@@ -105,6 +106,37 @@ var (
 		[]string{"cmdline"},
 	)
 )
+
+type scrapersManager struct {
+	scrapers map[string]chan bool
+	mu       sync.Mutex
+}
+
+func (m *scrapersManager) newScrapersChan() map[string]chan bool {
+	m.mu.Lock()
+	m.scrapers = make(map[string]chan bool)
+	m.mu.Unlock()
+	return m.scrapers
+}
+
+func (m *scrapersManager) checkContainerPresent(containerID string) (chan bool, bool) {
+	m.mu.Lock()
+	value, present := m.scrapers[containerID]
+	m.mu.Unlock()
+	return value, present
+}
+
+func (m *scrapersManager) addContainer(containerID string) {
+	m.mu.Lock()
+	m.scrapers[containerID] = make(chan bool)
+	m.mu.Unlock()
+}
+
+func (m *scrapersManager) flushScrapers() {
+	m.mu.Lock()
+	m.scrapers = nil
+	m.mu.Unlock()
+}
 
 func init() {
 	// Metrics have to be registered to be exposed:
@@ -208,9 +240,12 @@ func scrapeContainers(cli *client.Client) {
 		}
 
 		newScrapers := make(map[string]chan bool)
+		// newScrapersChan
+
 		containerCount := 0
 		for _, container := range containers {
 			containerCount++
+			// checkContainerPresent
 			if _, present := scrapers[container.ID]; present {
 				newScrapers[container.ID] = scrapers[container.ID]
 			} else {
