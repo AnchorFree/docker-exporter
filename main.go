@@ -130,9 +130,9 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 		return
 	}
 	name := inspect.Name
-	imageId := inspect.Image
+	imageID := inspect.Image
 	log.Printf("Start scraping %s", name)
-	perContainerLabels := prometheus.Labels{"name": name, "image_id": imageId}
+	perContainerLabels := prometheus.Labels{"name": name, "image_id": imageID}
 	timeout := time.Duration(interval.Nanoseconds() * 3 / 4) // 3/4 of the interval seems like a reasonable timeout
 	inspectDone := make(chan inspectResult, 1)
 	tick := time.Tick(*interval)
@@ -167,15 +167,15 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 			} else {
 				if result.err == context.DeadlineExceeded {
 					inspectTimeoutStatus.With(perContainerLabels).Set(bad)
-					continue
 				} else {
 					log.Printf("inspecting %s : %s", name, result.err)
 				}
+				continue
 			}
 
 			inspect = result.inspect
 			restartCounter.With(perContainerLabels).Set(float64(inspect.RestartCount))
-			dockerContainerStatus.With(prometheus.Labels{"name": name, "image_id": imageId, "docker_container_status": inspect.State.Status}).Set(1)
+			dockerContainerStatus.With(prometheus.Labels{"name": name, "image_id": imageID, "docker_container_status": inspect.State.Status}).Set(1)
 			if inspect.State.Health != nil {
 				if inspect.State.Health.Status == types.Healthy ||
 					inspect.State.Health.Status == types.NoHealthcheck {
@@ -212,7 +212,6 @@ func scrapeContainers(cli *client.Client) {
 			if _, present := scrapers[container.ID]; present {
 				newScrapers[container.ID] = scrapers[container.ID]
 			} else {
-				//log.Printf("new container: %s", container.ID)
 				newScrapers[container.ID] = make(chan bool)
 				go scrapeContainer(container, cli, newScrapers[container.ID])
 			}
@@ -220,8 +219,8 @@ func scrapeContainers(cli *client.Client) {
 		dockerContainerCount.With(prometheus.Labels{"docker_container_count": strconv.Itoa(containerCount)}).Set(float64(containerCount))
 
 		// detect containers which have gone away and kill their scrapers
-		for containerId, closer := range scrapers {
-			if _, present := newScrapers[containerId]; !present {
+		for containerID, closer := range scrapers {
+			if _, present := newScrapers[containerID]; !present {
 				//log.Printf("container gone: %s", containerId)
 				closer <- true
 				close(closer)
@@ -482,7 +481,7 @@ func scrapeDefunct() {
 func main() {
 	flag.Parse()
 	wg.Add(1)
-	
+
 	if *pperf > 0 {
 		pperfAddr := fmt.Sprintf("localhost:%d", *pperf)
 		go func() {
