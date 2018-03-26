@@ -167,11 +167,10 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 			} else {
 				if result.err == context.DeadlineExceeded {
 					inspectTimeoutStatus.With(perContainerLabels).Set(bad)
-					continue
 				} else {
 					log.Printf("inspecting %s : %s", name, result.err)
-					continue
 				}
+				continue
 			}
 
 			inspect = result.inspect
