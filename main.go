@@ -169,6 +169,7 @@ func scrapeContainer(container types.Container, cli *client.Client, closer <-cha
 					inspectTimeoutStatus.With(perContainerLabels).Set(bad)
 				} else {
 					log.Printf("inspecting %s : %s", name, result.err)
+					continue
 				}
 				continue
 			}
